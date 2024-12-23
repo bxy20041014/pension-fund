@@ -1,0 +1,1373 @@
+---
+title: "基金业绩分析"
+author: "bo xy"
+date: "2024-12-21"
+output: 
+  # flexdashboard::flex_dashboard:
+  #  orientation: columns
+  # install.packages("flexdashboard")
+  html_document:
+    toc: true #目录
+    toc_float:
+      collapsed: true
+    theme:
+      bootswatch: pulse
+  # install.packages("bslib")
+---
+
+```{r setup, include=FALSE,  message = FALSE, warning = FALSE,results = 'markup'}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# 一、开放基金净值增长能力检验
+
+## 1.指标选取
+
+本次检验选取了五只股票型开放基金分别为：\
+**建信深证基本面60ETF**\
+**工银瑞信深证100ETF**\
+**国联安沪深300ETF**\
+**景顺长城成长之星股票A**\
+**保险主题LOF**\
+在choice数据库中查找他们自2021年10月25日至2024年10月25日的**基金日净值**($nav$)、**累计净值**($cnav$)和**分红**($div$)情况，并用如下公式计算增长率：$$\frac{nav_t-(nav_{t-1}-div_{t-1})}{nav_{t-1}-div_{t-1}}$$另外混合基准收益率构建采用的是40%上证A指收益率+40%深证A指收益率+20%中信5-10年期国债收益率
+
+## 2.描述性统计
+
+### $cnav$增长率
+
+接下来对其增长率进行描述性统计，自2021年10月25日至2024年10月25日，各基金累计净值增长率和混合基准收益率的平均值、中位数、极值与标准差如下表所示
+
+```{r,echo = FALSE, results = 'hide', message = FALSE, warning = FALSE}
+library(readxl)
+library(tidyverse)
+library(pander)
+library(tseries)
+library(lmtest)
+library(vars)
+
+```
+
+```{r}
+
+stock <- read_excel("股指.xlsx", col_types = c("date", 
+                                          "numeric", "numeric", "numeric", "numeric", 
+                                          "numeric", "numeric", "numeric"))
+nav <- read_excel("股指.xlsx", sheet = "单位净值", 
+                 col_types = c("date", "numeric", "numeric", 
+                               "numeric", "numeric", "numeric", 
+                               "numeric", "numeric", "numeric", 
+                               "numeric", "numeric"))
+cnav <- read_excel("股指.xlsx", sheet = "累计净值", 
+                 col_types = c("date", "numeric", "numeric", 
+                               "numeric", "numeric", "numeric", 
+                               "numeric", "numeric", "numeric", 
+                               "numeric", "numeric"))
+
+
+df1=tibble(cnav)
+df2=tibble(nav)
+df3=tibble(stock)
+
+df=inner_join(df3,df1,by = "日期")
+df=inner_join(df,df2,by = "日期")
+
+cnav.data=df[,c(1,8,10,12,14,16,18)]
+nav.data=df[,c(1,8,20,22,24,26,28)]
+cnav.data=cnav.data[-729,]
+nav.data=nav.data[-729,]
+
+name=c("日期","混合基准收益率","建信深证基本面60ETF","工银瑞信深证100ETF","国联安沪深300ETF","景顺长城成长之星股票A","保险主题LOF")
+colnames(cnav.data)=name
+colnames(nav.data)=name
+cnav.name=names(cnav.data[,-1])
+nav.name=names(nav.data[,-1])
+summary.cnav=data.frame(
+    '名称'=character(),
+    '均值'=numeric(),
+    '中位数'=numeric(),
+    '最大值'=numeric(),
+    '最小值'=numeric(),
+    '标准差'=numeric()
+)
+for (x in cnav.name) {
+  summary.cnav <- rbind(summary.cnav,
+                        data.frame(
+                          名称 = x,
+                          均值 = mean(cnav.data[[x]], na.rm = TRUE),
+                          中位数 = median(cnav.data[[x]], na.rm = TRUE),
+                          最大值 = max(cnav.data[[x]], na.rm = TRUE),
+                          最小值 = min(cnav.data[[x]], na.rm = TRUE),
+                          标准差 = sqrt(var(cnav.data[[x]], na.rm = TRUE)),
+                          stringsAsFactors = FALSE
+                        ))
+}
+pander(summary.cnav)
+```
+
+可以看出，景顺长城成长之星股票A和保险主题LOF的累计净值增长率都超过了混合基准收益率，其余均未超过。
+
+### $nav$增长率
+
+接下来是日净值增长率的描述性统计，如下表
+
+```{r}
+summary.nav=data.frame(
+  '名称'=character(),
+  '均值'=numeric(),
+  '中位数'=numeric(),
+  '最大值'=numeric(),
+  '最小值'=numeric(),
+  '标准差'=numeric()
+)
+for (x in nav.name) {
+  summary.nav <- rbind(summary.nav,
+                        data.frame(
+                          名称 = x,
+                          均值 = mean(nav.data[[x]], na.rm = TRUE),
+                          中位数 = median(nav.data[[x]], na.rm = TRUE),
+                          最大值 = max(nav.data[[x]], na.rm = TRUE),
+                          最小值 = min(nav.data[[x]], na.rm = TRUE),
+                          标准差 = sqrt(var(nav.data[[x]], na.rm = TRUE)),
+                          stringsAsFactors = FALSE
+                        ))
+}
+pander(summary.nav)
+```
+
+日净值增长率的结果同累计净值增长结果没有很大出入，仍只有景顺长城成长之星股票A和保险主题LOF日净值增长率超过混合基准收益。
+
+### 时间序列图分析
+
+从[数据图]( https://grohdj-bo-xy.shinyapps.io/retirement_fund_app/){style="text-decoration:none;"}中可以看出绝大部分时候这五只基金的的累计净值增长率和日净值增长率和混合基准收益的波动同步，但是幅度较大，因此往往平均收益率可能偏低，且在2024年10月初所有基金包括基准收益开始大幅波动至今。但是保险主题LOF在2023年4月-7月净值增长率很高，综合来看保险主题LOF在净值增长方面是五个基金中最优的。
+
+## 2.因果关系检验
+为了探究基金净值收益率和市场指数收益率之间的关系，接下来进行净值增长率与指数收益率之间的因果关系检验  
+
+### cnav增长率ADF检验  
+```{r}
+#cnav单位根检验----
+
+for (x in colnames(cnav.data)) {
+  cat("基金累计净值增长率: ", x, "\n")
+  adf_result=adf.test(cnav.data[[x]])
+  print(adf_result)
+  cat("\n------------------------\n")
+}
+```
+结果显示所有序列都是平稳的，可以直接进行格兰杰因果检验，用以探究增长率序列和收益率序列之间的关系。
+
+### cnav增长率格兰杰因果检验  
+```{r}
+# 检查是否有缺失值
+cnav.data <- na.omit(cnav.data)
+
+# 使用 VARselect 来确定最优滞后阶数
+lag_selection <- VARselect(cnav.data[-1], lag.max = 10, type = "const")
+best_lag <- lag_selection$selection["AIC(n)"]  # 选择AIC准则确定的最优滞后阶数
+print(best_lag)
+
+# 循环对所有基金收益列进行格兰杰因果检验
+for (fund in colnames(cnav.data[,-c(1,2)])) {  
+  cat("基金累计净值增长率: ", fund, "\n")
+  
+  # 检验基准收益是否由基金净值增长格兰杰导致
+  print(grangertest(as.formula(paste("混合基准收益率 ~", fund)), order = best_lag, data = cnav.data))
+  
+  # 检验基金净值增长率是否由基准收益格兰杰导致
+  print(grangertest(as.formula(paste(fund, "~ 混合基准收益率")), order = best_lag, data = cnav.data))
+  
+  cat("\n------------------------\n")
+}
+```
+
+结果显示  
+
+- 建信深证基本面60ETF，工银瑞信深证100ETF，保险主题LOF净值增长率与混合基准收益间不存在格兰杰因果，认为二者之间不存在必然联系，无法通过分析指数收益率变化来估计这三个基金的净值变化。  
+- 国联安沪深300ETF，景顺长城成长之星股票A在0.05显著性水平下存在格兰杰因果，说明其与混合基准收益之间存在联系。
+
+### nav增长率ADF检验
+```{r}
+for (x in colnames(nav.data)) {
+  cat("基金日净值增长率: ", x, "\n")
+  adf_result=adf.test(cnav.data[[x]])
+  print(adf_result)
+  cat("\n------------------------\n")
+}
+```
+
+结果显示，所有序列都是平稳的，可以进行格兰杰因果检验
+
+### nav增长率格兰杰因果检验
+```{r}
+# 检查是否有缺失值
+nav.data <- na.omit(nav.data)
+
+# 使用 VARselect 来确定最优滞后阶数
+lag_selection <- VARselect(nav.data[-1], lag.max = 10, type = "const")
+best_lag <- lag_selection$selection["AIC(n)"]  # 选择AIC准则确定的最优滞后阶数
+print(best_lag)
+
+# 循环对所有基金收益列进行格兰杰因果检验
+for (fund in colnames(nav.data[,-c(1,2)])) {  
+  cat("基金日净值增长率: ", fund, "\n")
+  
+  # 检验基准收益是否由基金净值增长格兰杰导致
+  print(grangertest(as.formula(paste("混合基准收益率 ~", fund)), order = best_lag, data = nav.data))
+  
+  # 检验基金净值增长率是否由基准收益格兰杰导致
+  print(grangertest(as.formula(paste(fund, "~ 混合基准收益率")), order = best_lag, data = nav.data))
+  
+  cat("\n------------------------\n")
+}
+```
+
+结果显示
+
+- 建信深证基本面60ETF，工银瑞信深证100ETF，保险主题LOF与混合基准收益间不存在格兰杰因果。  
+- 国联安沪深300ETF，景顺长城成长之星股票A在0.05显著性水平下存在格兰杰因果。  
+与cnav增长率的结果一致，这并没有在预料之外。
+
+
+## 3.协整检验
+
+格兰杰因果检验更多的揭示了短期之间混合基准收益与基金净值之间的关系，长期来看则有必要进行协整检验来判断变量间是否具有共同的趋势。下面考虑基金净值增长和市场走势(用上证A指收益率衡量)之间的长期关系，进行协整检验。
+
+### cnav增长率协整检验
+```{r}
+A=data.frame(上证A指收益率=stock$上证A指收益率)
+A=na.omit(A)
+cnav.data=cbind(cnav.data,A)
+nav.data=cbind(nav.data,A)
+library(urca)
+
+for (i in 1:6) {
+  # 线性回归
+  reg <- lm(cnav.data[[i]] ~ cnav.data$上证A指收益率)
+  residuals <- reg$residuals
+  
+  # 单位根检验（残差）
+  unit_root_test <- ur.df(residuals, type = "drift", selectlags = "AIC")
+  #拒绝原假设意味着残差序列无单位根，残差长期平稳，具有长期关系
+  cat(paste(colnames(cnav.data[i]), "与上证A指的协整检验结果：\n"))
+  print(summary(unit_root_test))
+}
+```
+
+全部拒绝残差非平稳的原假设，说明五只基金的累计净值增长增长与上证A指均存在长期关系。
+
+### nav增长率协整检验
+
+```{r}
+for (i in 1:6) {
+  # 线性回归
+  reg <- lm(nav.data[[i]] ~ nav.data$上证A指收益率)
+  residuals <- reg$residuals
+  
+  # 单位根检验（残差）
+  unit_root_test <- ur.df(residuals, type = "drift", selectlags = "AIC")
+  #拒绝原假设意味着残差序列无单位根，残差长期平稳，具有长期关系
+  cat(paste(colnames(nav.data[i]), "与上证A指的协整检验结果：\n"))
+  print(summary(unit_root_test))
+}
+```
+
+结果不出预料，全部基金日净值增长同上证A指收益率存在长期关系。上面的结果说明无论是nav还是cnav长期来看五只基金都会收敛于市场的收益率，可以认为系统风险等同于市场风险，波动也主要源于市场波动。
+
+# 二、基于风险调整收益的开放基金业绩评价
+
+## 1.指标选取
+各基金的收益率取日净值增长率，无风险利率使用csmar数据库提供的日度化无风险收益率（%），进行四个指标的计算。
+
+## 2.业绩比较
+```{r}
+#风险调整收益----
+#定义计算函数----
+library(dplyr)
+
+# 计算夏普比率(年化)----
+sharpe_ratio <- function(returns, risk_free_rate = 0, scale = 252) {
+  excess_returns <- returns - risk_free_rate
+  mean_excess_return <- mean(excess_returns, na.rm = TRUE)
+  sd_excess_return <- sd(excess_returns, na.rm = TRUE)
+  
+  sharpe <- (mean_excess_return / sd_excess_return) * sqrt(scale)
+  return(sharpe)
+}
+
+# 计算特雷诺比率----
+treynor_ratio <- function(returns, risk_free_rate = 0, beta) {
+  excess_returns <- returns - risk_free_rate
+  mean_excess_return <- mean(excess_returns, na.rm = TRUE)
+  
+  treynor <- mean_excess_return / beta
+  return(treynor)
+}
+
+# 计算信息比率----
+information_ratio <- function(returns, benchmark_returns) {
+  excess_returns <- returns - benchmark_returns
+  mean_excess_return <- mean(excess_returns, na.rm = TRUE)
+  tracking_error <- sd(excess_returns, na.rm = TRUE)
+  
+  information <- mean_excess_return / tracking_error
+  return(information)
+}
+
+# 计算M方指标----
+m2_ratio <- function(fund_returns, benchmark_returns, risk_free_rate = 0) {
+  beta <- cov(fund_returns, benchmark_returns) / var(benchmark_returns)
+  m2=(mean(fund_returns, na.rm = TRUE) - risk_free_rate) - beta * (mean(benchmark_returns, na.rm = TRUE) - risk_free_rate)
+  return(m2)
+}
+
+rf <- read_excel("rf.xlsx", col_types = c("text", 
+                                          "skip", "numeric"))
+rf$日期=as.Date(rf$日期, format = "%Y-%m-%d")
+nav.data=inner_join(nav.data,rf,by = '日期')
+
+results <- data.frame(Fund = character(), 
+                      Sharpe = numeric(), 
+                      Treynor = numeric(), 
+                      Information = numeric(), 
+                      M2 = numeric(), 
+                      stringsAsFactors = FALSE)
+
+for (i in 2:7) {  # 基金列从2到7
+  fund_returns <- nav.data[[i]]
+  market_returns <- nav.data$上证A指收益率
+  risk_free_rate <- mean(nav.data$`日度化无风险利率(%)`)
+  
+  # 计算各项指标
+  sharpe <- sharpe_ratio(fund_returns, risk_free_rate)
+  beta <- cov(fund_returns, market_returns) / var(market_returns)
+  treynor <- treynor_ratio(fund_returns, risk_free_rate, beta)
+  information <- information_ratio(fund_returns, market_returns)
+  m2 <- m2_ratio(fund_returns, market_returns, risk_free_rate)
+  
+  # 将结果存入数据框
+  results <- rbind(results, data.frame(Fund = colnames(nav.data)[i],
+                                       Sharpe = sharpe, 
+                                       Treynor = treynor, 
+                                       Information = information, 
+                                       M2 = m2))
+}
+
+
+results <- results |> 
+  mutate(
+    排名_sharpe = rank(-Sharpe, ties.method = "first"),.after = Sharpe) |> 
+  mutate(
+    排名_Treynor = rank(-Treynor, ties.method = "first"),.after=Treynor) |> 
+  mutate(
+    排名_Information = rank(-Information, ties.method = "first"),.after=Information) |> 
+  mutate(
+    排名_M2 = rank(-M2, ties.method = "first"),.after=M2)
+
+pander(results[,1:5])
+pander(results[,c(1,6:9)])
+```
+
+从各种评价结果的排序来看，夏普指数、信息比率、M方法下的基金业绩排序结果完全一致，说明虽然用不同指标得出的业绩绝对值大小不同，但基金的排名是大体相同的。
+所有基金中保险主题LOF风险调整收益最高，其次是景顺长城成长之星股票A和建信深证基本面60ETF，这三个基金战胜了复合指数，尤其是保险主题LOF远超复合指数，取得了良好的收益。
+
+# 三、基于CAPM模型的基金业绩评价
+
+除了上文提到的几种风险调整收益，还可以使用CAPM模型来得到alpha值来考虑排除市场波动后的个体收益，判断基金的估值情况进而分析基金的业绩。
+
+## 1. 指标选取
+计算超额收益时使用的无风险利率仍是上一节中的，在构建三因素模型时，使用的SMB和HML因子来自csmar上的因子分析数据。
+
+## 2.单因素模型结果及分析
+
+```{r}
+#SM模型----
+
+nav.data=nav.data |> 
+  mutate(
+    混合基准收益率超额收益 = 混合基准收益率 - `日度化无风险利率(%)`,
+    建信深证基本面60ETF超额收益 = 建信深证基本面60ETF - `日度化无风险利率(%)`,
+    工银瑞信深证100ETF超额收益 = 工银瑞信深证100ETF - `日度化无风险利率(%)`,
+    国联安沪深300ETF超额收益 = 国联安沪深300ETF - `日度化无风险利率(%)`,
+    景顺长城成长之星股票A超额收益 = 景顺长城成长之星股票A - `日度化无风险利率(%)`,
+    保险主题LOF超额收益 = 保险主题LOF - `日度化无风险利率(%)`,
+    市场超额收益 = 上证A指收益率 - `日度化无风险利率(%)`
+  )
+nav.data.reg=nav.data[,c(-2:-7)]
+
+newname=colnames(nav.data.reg[,c(-1:-3,-10)])
+i=1
+alpha=numeric(6)
+beta=numeric(6)
+t_value_alpha=numeric(6)
+t_value_beta=numeric(6)
+p_value_alpha=numeric(6)
+p_value_beta=numeric(6)
+R2=numeric(6)
+for (x in newname) {
+  # 使用lm进行普通回归
+  fit <- lm(reformulate("市场超额收益", response = x), data = nav.data.reg)
+  
+  # 提取回归系数
+  alpha[i] <- coef(fit)[1]
+  beta[i] <- coef(fit)[2]
+  
+  # 提取 t 值和 p 值（截距）
+  summary_fit <- summary(fit)
+  t_value_alpha[i] <- summary_fit$coefficients[1, "t value"]
+  p_value_alpha[i] <- round(summary_fit$coefficients[1, "Pr(>|t|)"], 2)
+  
+  # 计算 beta = 1 的 t 值
+  beta_estimate <- coef(fit)[2]
+  beta_se <- summary_fit$coefficients[2, "Std. Error"]
+  t_value_beta[i] <- (beta_estimate - 1) / beta_se  # 计算 beta = 1 的 t 值
+  
+  # 计算 p 值
+  p_value_beta[i] <- 2 * pt(-abs(t_value_beta[i]), df = summary_fit$df[2])  # 双侧检验的 p 值
+  p_value_beta[i]=round(p_value_beta[i],2)
+  
+  # 提取 R^2
+  R2[i] <- summary_fit$r.squared
+  
+  # 更新索引
+  i <- i + 1
+}
+sm.results <- data.frame(
+  Fund = newname,
+  Alpha = alpha,
+  T_Value_Alpha = t_value_alpha,
+  P_Value_Alpha = p_value_alpha,
+  Beta = beta,
+  t_Value_Beta = t_value_beta,
+  P_Value_Beta = p_value_beta,  # 用于检验 beta = 1 的 p 值
+  R_Squared = R2
+)
+pander(sm.results[,1:4])
+pander(sm.results[,c(1,5:8)])
+```
+
+- 保险主题LOF和景顺长城成长之星股票A的alpha值为正，其余均为负，没有战胜市场，这与前面的风险调整收益结果一致，但是所有alpha值均不显著，仅代表分析期内的结果，对于未来可能的波动可能不具代表性；  
+- 所有基金在beta=1的检验中均显著，且均在1附近波动，说明所有基金对于市场风险的依存度较高，受市场影响明显，这与上文的协整检验结果是相通的；  
+
+- R方普遍在70%以上，甚至有国联安沪深300ETF的90%，说明市场超额收益很好的描述了这些基金的收益来源，但是保险主题LOF则仅有55%，一方面说明了市场超额收益不能很好预测其收益，也反映了该基金对于市场的依赖程度较低，有较好的择机能力，因此在以往各项评价中往往是收益最高的
+
+## 3.双因素模型结果及其分析
+
+```{r}
+#双因素模型----
+B=stock[-729,7]
+nav.data.reg=cbind(nav.data.reg,B)
+nav.data.reg=nav.data.reg |> 
+  mutate(
+    国债超额收益 = `中证5-10年国债活跃券收益率` - `日度化无风险利率(%)`
+  ) 
+i=1
+alpha=numeric(6)
+beta1=numeric(6)
+beta2=numeric(6)
+t_value_alpha=numeric(6)
+t_value_beta1=numeric(6)
+t_value_beta2=numeric(6)
+p_value_alpha=numeric(6)
+p_value_beta1=numeric(6)
+p_value_beta2=numeric(6)
+R2=numeric(6)
+for (x in newname) {
+  # 使用lm进行普通回归
+  fit <- lm(reformulate(c("市场超额收益","国债超额收益"), response = x), data = nav.data.reg[,-11])
+  
+  # 提取回归系数
+  alpha[i] <- coef(fit)[1]
+  beta1[i] <- coef(fit)[2]
+  beta2[i] <- coef(fit)[3]
+  
+  # 提取 t 值和 p 值（截距）
+  summary_fit <- summary(fit)
+  t_value_alpha[i] <- summary_fit$coefficients[1, "t value"]
+  p_value_alpha[i] <- round(summary_fit$coefficients[1, "Pr(>|t|)"], 2)
+  
+  # 计算 beta1 = 1 的 t 值
+  beta1_estimate <- coef(fit)[2]
+  beta1_se <- summary_fit$coefficients[2, "Std. Error"]
+  t_value_beta1[i] <- (beta1_estimate - 1) / beta1_se  # 计算 beta = 1 的 t 值
+  
+  # 计算 p 值
+  p_value_beta1[i] <- 2 * pt(-abs(t_value_beta1[i]), df = summary_fit$df[2])  # 双侧检验的 p 值
+  p_value_beta1[i]=round(p_value_beta1[i],2)
+  
+  # 计算 beta2 = 1 的 t 值
+  beta2_estimate <- coef(fit)[3]
+  beta2_se <- summary_fit$coefficients[3, "Std. Error"]
+  t_value_beta2[i] <- (beta2_estimate -1) / beta2_se  # 计算 beta = 1 的 t 值
+  
+  # 计算 p 值
+  p_value_beta2[i] <- 2 * pt(-abs(t_value_beta2[i]), df = summary_fit$df[2])  # 双侧检验的 p 值
+  p_value_beta2[i]=round(p_value_beta2[i],2)
+  # 提取 R^2
+  R2[i] <- summary_fit$adj.r.squared
+  
+  # 更新索引
+  i <- i + 1
+}
+double.results <- data.frame(
+  Fund = newname,
+  Alpha = alpha,
+  T_Value_Alpha = t_value_alpha,
+  P_Value_Alpha = p_value_alpha,
+  Beta1 = beta1,
+  t_Value_Beta1 = t_value_beta1,
+  P_Value_Beta1 = p_value_beta1,
+  Beta2 = beta2,
+  t_Value_Beta2 = t_value_beta2,
+  P_Value_Beta2 = p_value_beta2,
+  adj.R_2 = R2
+)
+pander(double.results[,1:4])
+pander(double.results[,c(1,5:8)])
+pander(double.results[,c(1,9:11)])
+```
+
+- 结果相较单因素模型变化不大，beta2=1的检验虽然都显著，但是调整的R方知变化不大，部分还有略微下降，说明国债指数超额收益对于股票型开放基金的风险预测能力提升有限；  
+
+- 进一步检验发现对于保险主题LOF和景顺长城成长之星股票A来说beta2显著为0，而这两只基金的评价是最高的，因此可能收益高的基金对于国债指数的依赖度会低一些。
+
+## 4.三因素模型
+```{r}
+#fama三因素
+
+fama <- read_excel("fama.xlsx")
+fama$日期=as.Date(fama$日期)
+
+nav.data.reg=inner_join(nav.data.reg,fama,by = "日期")
+
+i=1
+alpha=numeric(6)
+beta=numeric(6)
+lambda1=numeric(6)
+lambda2=numeric(6)
+t_value_alpha=numeric(6)
+t_value_beta=numeric(6)
+t_value_lambda1=numeric(6)
+t_value_lambda2=numeric(6)
+p_value_alpha=numeric(6)
+p_value_beta=numeric(6)
+p_value_lambda1=numeric(6)
+p_value_lambda2=numeric(6)
+R2=numeric(6)
+for (x in newname) {
+  # 使用lm进行普通回归
+  fit <- lm(reformulate(c("市场超额收益","市值因子","账面市值比因子"), response = x), data = nav.data.reg)
+  
+  # 提取回归系数
+  alpha[i] <- coef(fit)[1]
+  beta[i] <- coef(fit)[2]
+  lambda1[i] <- coef(fit)[3]
+  lambda2[i] <- coef(fit)[4]
+  
+  # 提取 t 值和 p 值（截距）
+  summary_fit <- summary(fit)
+  t_value_alpha[i] <- summary_fit$coefficients[1, "t value"]
+  p_value_alpha[i] <- round(summary_fit$coefficients[1, "Pr(>|t|)"], 2)
+  
+  # 计算 beta1 = 1 的 t 值
+  beta1_estimate <- coef(fit)[2]
+  beta1_se <- summary_fit$coefficients[2, "Std. Error"]
+  t_value_beta1[i] <- (beta1_estimate - 1) / beta1_se  # 计算 beta = 1 的 t 值
+  
+  # 计算 p 值
+  p_value_beta1[i] <- 2 * pt(-abs(t_value_beta1[i]), df = summary_fit$df[2])  # 双侧检验的 p 值
+  p_value_beta1[i]=round(p_value_beta1[i],2)
+  
+  # 提取 t 值和 p 值（市值因子）
+  summary_fit <- summary(fit)
+  t_value_lambda1[i] <- summary_fit$coefficients[3, "t value"]
+  p_value_lambda1[i] <- round(summary_fit$coefficients[3, "Pr(>|t|)"], 2)
+  # 提取 t 值和 p 值（账面市值比因子）
+  summary_fit <- summary(fit)
+  t_value_lambda2[i] <- summary_fit$coefficients[4, "t value"]
+  p_value_lambda2[i] <- round(summary_fit$coefficients[4, "Pr(>|t|)"], 2)
+  
+  # 提取 R^2
+  R2[i] <- summary_fit$adj.r.squared
+  
+  # 更新索引
+  i <- i + 1
+}
+fama.results <- data.frame(
+  Fund = newname,
+  Alpha = alpha,
+  T_Value_Alpha = t_value_alpha,
+  P_Value_Alpha = p_value_alpha,
+  Beta1 = beta1,
+  t_Value = t_value_beta1,
+  P_Value = p_value_beta1,
+  Lambda1 = lambda1,
+  t_Value_lambda1 = t_value_lambda1,
+  p_value_lambda1 = p_value_lambda1,
+  Lambda2 = lambda2,
+  t_Value_lambda2 = t_value_lambda2,
+  p_value_lambda2 = p_value_lambda2,
+  adj_R_Squared = R2
+)
+
+pander(fama.results[,1:4])
+pander(fama.results[,c(1,5:7)])
+pander(fama.results[,c(1,8:10)])
+pander(fama.results[,c(1,11:13)])
+pander(fama.results[,c(1,14)])
+
+```
+
+- 在三因素模型下，alpha全部为正值，与单因素模型有很大不同，且仅有保险主题LOF的alpha值下降，说明在三因素模型下，各基金的评价会发生变化，因此加入SMB和HML是有作用的；  
+
+- 另外beta值仍显著为不为1，说明虽然值近似为1，但是对于市场风险的依赖仍是有限的；  
+- 对于lambda1，所有基金都显著为负，说明股票的规模对于股票行的基金影响很大，且大盘股的作用显著优于小盘股，开放基金更倾向于选取大盘股来取得更高的收益；  
+- lambda2只有建信深证基本面60ETF和保险主题LOF显著为正，这两个基金认为价值股被低估，其风险溢价较高从而选择更多的价值股，但是建信深证基本面60ETF的评价较低，其在选取价值股的过程可能存在问题，但是保险主题LOF则通过价值股获得很高的收益，其余基金的lambda2显著为负，说明其构建投资组合时较保守，倾向于稳定增长的成长股。
+
+## 5.各开放基金在不同比率下的业绩相关性
+
+```{r}
+cov.data=cbind(results[,c(1,2,4,6,8)],summary.nav[,2])
+cov.data=cbind(cov.data,sm.results[,2])
+colnames(cov.data)[6]="日净值增长"
+colnames(cov.data)[7]='alpha值'
+
+#相关性
+correlation_matrix <- cor(cov.data[,2:7])
+pander(correlation_matrix)
+
+```
+
+- 基金净值增长率与风险调整收益率的相关性很强，说明二者之间几乎等同，使用简单的净值增长率也可以大致判断基金的表现；  
+
+- 几种风险调整收益之间相关性也很强，说明就基金评价而言，这几个指标之间并无明显优劣，与前面的结果分析也是一致的。
+
+## 6.业绩分解分析
+
+```{r}
+#业绩分解
+
+market.premium=mean(nav.data.reg[[10]])
+beta.risk=sm.results$Beta
+premium=summary.nav$均值-mean(rf$`日度化无风险利率(%)`)
+risk.premium=beta.risk*market.premium
+select.premium=sm.results$Alpha
+diversifiable.premium=summary.nav$均值-mean(rf$`日度化无风险利率(%)`)-market.premium
+net.selection=select.premium-diversifiable.premium
+managerial.risk=risk.premium-market.premium
+
+performance=data.frame(名称=nav.name,
+                          超额收益=premium,
+                          风险回报=risk.premium,
+                          选择回报=select.premium,
+                          可分散回报=diversifiable.premium,
+                          净选择回报=net.selection,
+                          经理人风险回报=managerial.risk)
+
+performance <- performance |> 
+  mutate(
+    排序1 = rank(-净选择回报, ties.method = "first"),.after = 净选择回报) |> 
+  mutate(
+    排序2 = rank(-经理人风险回报, ties.method = "first"),.after=经理人风险回报)
+pander(performance[,1:5])
+pander(performance[,c(1,6:9)])
+```
+
+- 除了保险主题LOF其余基金的超额收益都为负，没有达到预期，这四个基金中仅有景顺长城成长之星股票A的alpha为正，即选择回报为正，说明其余三个选择回报为负的基金证券选择能力不强，而景顺长城成长之星股票A和保险主题LOF较强；  
+
+- 所有基金的风险回报为负，说明并没有在市场波动中获利；除景顺长城成长之星股票A外，经理人风险回报均为负值，说明大部分基金的经理较保守，这与他们的beta值大于1有关，其受市场波动很明显，beta值最大的工银瑞信深证100ETF经理人风险回报也最小；  
+
+- 同时观察到净选择回报和经理人风险回报的排序恰好相反，这也是符合直觉的，净选择回报高的基金如工银瑞信深证100ETF，由于放弃了分散性，承担更大风险，回报也相应更高一些，但是由于基金经理人的保守，因此经理人风险回报部分就因为分散性的降低而降低。
+
+
+# 四、证券选择能力和市场择机能力
+
+## 1.TM模型
+
+```{r}
+##TM 
+i=1
+alpha=numeric(6)
+beta=numeric(6)
+lambda=numeric(6)
+p_alpha=numeric(6)
+p_beta=numeric(6)
+p_lambda=numeric(6)
+R2=numeric(6)
+for (x in newname) {
+  # 使用lm进行普通回归
+  fit <- lm(reformulate(c("市场超额收益","I(市场超额收益^2)"), response = x), data = nav.data.reg)
+  
+  # 提取回归系数
+  alpha[i] <- coef(fit)[1]
+  beta[i] <- coef(fit)[2]
+  lambda[i] <- coef(fit)[3]
+  
+  # 提取 t 值和 p 值（截距）
+  summary_fit <- summary(fit)
+  p_alpha[i] <- round(summary_fit$coefficients[1, "Pr(>|t|)"], 2)
+  p_beta[i] <- round(summary_fit$coefficients[2, "Pr(>|t|)"], 2)
+  p_lambda[i] <- round(summary_fit$coefficients[3, "Pr(>|t|)"], 2)
+  
+  # 提取 R^2
+  R2[i] <- summary_fit$adj.r.squared
+  
+  # 更新索引
+  i <- i + 1
+}
+tm.results <- data.frame(
+  Fund = newname,
+  Alpha = alpha,
+  P_Value_Alpha = p_value_alpha,
+  Beta = beta,
+  P_Value_Beta = p_value_beta,  
+  Lambda=lambda,
+  P_Value_Lambda=p_lambda,
+  R_Squared = R2
+)
+pander(tm.results[,1:5])
+pander(tm.results[,c(1,6:8)])
+```
+
+- 从TM模型的结果来看保险主题LOF，景顺长城成长之星股票A，建信深证基本面60ETF的alpha值为正，但是不显著，证券选择能力较强，但是不明显，可能存在运气成分。  
+
+- 接下来是lambda值，工银瑞信深证100ETF和国联安沪深300ETF的lambda值显著为正，说明有较强的市场时机把握能力。建信深证基本面60ETF超额收益的lambda值为负，说明其市场时机把握能力不佳，这也和上文中提到的三因素模型中其与保险主题LOF都倾向于价值股，但是收益不佳对应，说明其在选股上存在问题。其余基金lambda值为正，说明市场时机把握能力基本都不错。
+
+## 2.HM模型
+
+```{r}
+D=as.numeric(nav.data.reg[[10]]>0)
+nav.data.reg.HM = cbind(nav.data.reg,D)
+
+i=1
+alpha=numeric(6)
+beta=numeric(6)
+lambda=numeric(6)
+p_alpha=numeric(6)
+p_beta=numeric(6)
+p_lambda=numeric(6)
+R2=numeric(6)
+for (x in newname) {
+  # 使用lm进行普通回归
+  fit <- lm(reformulate(c("市场超额收益","D"), response = x), data = nav.data.reg.HM)
+  
+  # 提取回归系数
+  alpha[i] <- coef(fit)[1]
+  beta[i] <- coef(fit)[2]
+  lambda[i] <- coef(fit)[3]
+  
+  # 提取 t 值和 p 值（截距）
+  summary_fit <- summary(fit)
+  p_alpha[i] <- round(summary_fit$coefficients[1, "Pr(>|t|)"], 2)
+  p_beta[i] <- round(summary_fit$coefficients[2, "Pr(>|t|)"], 2)
+  p_lambda[i] <- round(summary_fit$coefficients[3, "Pr(>|t|)"], 2)
+  
+  # 提取 R^2
+  R2[i] <- summary_fit$adj.r.squared
+  
+  # 更新索引
+  i <- i + 1
+}
+hm.results <- data.frame(
+  Fund = newname,
+  Alpha = alpha,
+  P_Alpha = p_value_alpha,
+  Beta = beta,
+  P_Beta = p_value_beta,  
+  Lambda=lambda,
+  P_Value_Lambda=p_lambda,
+  R_Squared = R2
+)
+pander(hm.results[,1:5])
+pander(hm.results[,c(1,6:8)])
+```
+
+- 在HM模型下，建信深证基本面60ETF和保险主题LOF的alpha值仍为正，与TM模型描述的相同，有较强的证券选择能力，但是景顺长城成长之星股票A不再为正值，与TM模型结果（alpha值为正，但是很小）相比，说明景顺长城成长之星股票A的证券选择能力可能较差。  
+
+- 从lambda来看所有基金的lambda均不显著，但是正负值与TM模型一致，姑且认为市场把握能力同TM模型描述的相同。
+
+## 3.三因素模型
+
+TM三因素模型
+```{r}
+#Tm三因素
+i=1
+alpha=numeric(6)
+beta=numeric(6)
+gamma=numeric(6)
+lambda1=numeric(6)
+lambda2=numeric(6)
+p_value_alpha=numeric(6)
+p_value_beta=numeric(6)
+p_value_gamma=numeric(6)
+p_value_lambda1=numeric(6)
+p_value_lambda2=numeric(6)
+R2=numeric(6)
+for (x in newname) {
+  # 使用lm进行普通回归
+  fit <- lm(reformulate(c("市场超额收益","I(市场超额收益^2)","市值因子","账面市值比因子"), response = x), data = nav.data.reg)
+  
+  # 提取回归系数
+  alpha[i] <- coef(fit)[1]
+  beta[i] <- coef(fit)[2]
+  gamma[i] <- coef(fit)[3]
+  lambda1[i] <- coef(fit)[4]
+  lambda2[i] <- coef(fit)[5]
+  
+  # 提取 t 值和 p 值（截距）
+  summary_fit <- summary(fit)
+  p_value_alpha[i] <- round(summary_fit$coefficients[1, "Pr(>|t|)"], 2)
+  
+  summary_fit <- summary(fit)
+  p_value_gamma[i] <- round(summary_fit$coefficients[3, "Pr(>|t|)"], 2)
+  # 提取 t 值和 p 值（市值因子）
+  summary_fit <- summary(fit)
+  p_value_lambda1[i] <- round(summary_fit$coefficients[4, "Pr(>|t|)"], 2)
+  # 提取 t 值和 p 值（账面市值比因子）
+  summary_fit <- summary(fit)
+  p_value_lambda2[i] <- round(summary_fit$coefficients[5, "Pr(>|t|)"], 2)
+  
+  # 提取 R^2
+  R2[i] <- summary_fit$adj.r.squared
+  
+  # 更新索引
+  i <- i + 1
+}
+fama.tm.results <- data.frame(
+  Fund = newname,
+  Alpha = alpha,
+  P_Value_Alpha = p_value_alpha,
+  Beta1 = beta1,
+  P_Value = p_value_beta1,
+  Gamma = gamma,
+  p_value_gamma= p_value_gamma,
+  Lambda1 = lambda1,
+  p_lambda1 = p_value_lambda1,
+  Lambda2 = lambda2,
+  p_lambda2 = p_value_lambda2,
+  adj_R_Squared = R2
+)
+pander(fama.tm.results[,1:5])
+pander(fama.tm.results[,c(1,6:7)])
+pander(fama.tm.results[,c(1,8:11)])
+
+
+```
+
+HM三因素模型
+```{r}
+#hm三因素
+i=1
+alpha=numeric(6)
+beta=numeric(6)
+gamma=numeric(6)
+lambda1=numeric(6)
+lambda2=numeric(6)
+p_value_alpha=numeric(6)
+p_value_beta=numeric(6)
+p_value_gamma=numeric(6)
+p_value_lambda1=numeric(6)
+p_value_lambda2=numeric(6)
+R2=numeric(6)
+for (x in newname) {
+  # 使用lm进行普通回归
+  fit <- lm(reformulate(c("市场超额收益","D","市值因子","账面市值比因子"), response = x), data = nav.data.reg.HM)
+  
+  # 提取回归系数
+  alpha[i] <- coef(fit)[1]
+  beta[i] <- coef(fit)[2]
+  gamma[i] <- coef(fit)[3]
+  lambda1[i] <- coef(fit)[4]
+  lambda2[i] <- coef(fit)[5]
+  
+  # 提取 t 值和 p 值（截距）
+  summary_fit <- summary(fit)
+  p_value_alpha[i] <- round(summary_fit$coefficients[1, "Pr(>|t|)"], 2)
+  
+  summary_fit <- summary(fit)
+  p_value_gamma[i] <- round(summary_fit$coefficients[3, "Pr(>|t|)"], 2)
+  # 提取 t 值和 p 值（市值因子）
+  summary_fit <- summary(fit)
+  p_value_lambda1[i] <- round(summary_fit$coefficients[4, "Pr(>|t|)"], 2)
+  # 提取 t 值和 p 值（账面市值比因子）
+  summary_fit <- summary(fit)
+  p_value_lambda2[i] <- round(summary_fit$coefficients[5, "Pr(>|t|)"], 2)
+  
+  # 提取 R^2
+  R2[i] <- summary_fit$adj.r.squared
+  
+  # 更新索引
+  i <- i + 1
+}
+fama.hm.results <- data.frame(
+  Fund = newname,
+  Alpha = alpha,
+  P_Value_Alpha = p_value_alpha,
+  Beta1 = beta1,
+  P_Value = p_value_beta1,
+  Gamma = gamma,
+  p_value_gamma= p_value_gamma,
+  Lambda1 = lambda1,
+  p_lambda1 = p_value_lambda1,
+  Lambda2 = lambda2,
+  p_lambda2 = p_value_lambda2,
+  adj_R_Squared = R2
+)
+pander(fama.hm.results[,1:5])
+pander(fama.hm.results[,c(1,6:7)])
+pander(fama.hm.results[,c(1,8:11)])
+
+```
+
+- 从alpha值来看，无论是HM还是TM所有基金的值均为正值，工银瑞信深证100ETF和国联安沪深300ETF在HM模型下显著为正，说明所有基金的证券选择能力相差不多，与单因素模型有较大差别，说明加入两个因子后，证券选择能力的考察维度有所改变，可能涉及到大盘小盘，价值和成长的取舍，从而导致了所有基金的证券选择能力都相差不大了。  
+
+- 记着是gamma值衡量的市场时机把握能力，HM和TM模型有很大出入，在TM模型下仅有建信深证基本面60ETF和景顺长城成长之星股票A为负值，表明二者市场时机把握能力较差，与TM单因素模型结论基本一致，但是在HM三因素模型中，仅有景顺长城成长之星股票A为正，其余均为负，再结合gamma值的P值，景顺长城成长之星股票A接近1，因此我认为景顺长城成长之星股票A的市场时机把握能力用TM或HM模型进行描述是不准确的，或者说景顺长城成长之星股票A由于专注于成长型股票，对于市场的波动与证券的选择是消极的，不会受到很大影响。  
+
+- 从SMB的系数来看，所有基金均为负值，与上一节中分析的一致，大盘股的作用更加明显，倾向于大盘股，羊群效应明显。  
+
+- 从HML来看，仍是只有建信深证基本面60ETF和保险主题LOF显著为正，倾向于价值股。
+
+# 五、开放基金业绩持续性检验
+
+## 1.列联表检验
+下表所示为按季度平均收益率下进行的列联表检验，评估期为当前季度，持续期为下一季度，由于基金数量较少使用Z统计量有较多的0值，因此不考虑，使用卡方统计量进行列联表检验，发现卡方值均在3.84以下，接受原假设，说明基金业绩在季度时间段内不可持续。
+```{r}
+library(readxl)
+results <- read_excel("123.xlsx")
+
+pander(results[,c(1:5,10)])
+
+```
+
+## 2. 回归方法检验
+由于基金样本数量太少，回归的杠杆十分严重，无法得到任何信息，回归方法不合适
+
+# 六、流动性交易对业绩的影响
+
+## 1.流动性交易量分析
+**2021描述性统计（单位：百万元）**
+```{r}
+fluidity.data <- read_excel("交易.xlsx", sheet = "Sheet2")
+index = names(fluidity.data[,c(3:7)])
+
+fluidity.data.2021 = fluidity.data |> filter(year==2021)
+fluidity.data.2022 = fluidity.data |> filter(year==2022)
+fluidity.data.2023 = fluidity.data |> filter(year==2023)
+fluidity.data.2024 = fluidity.data |> filter(year==2024)
+
+result.2021 = fluidity.data.2021[,-1:-2] |> 
+  pivot_longer(cols = all_of(index),names_to = "index",values_to = 'value') |> 
+  group_by(index) |> 
+  summarise(
+    均值 = mean(value)/10^6,
+    中位数 = median(value)/10^6,
+    最大值 = max(value)/10^6,
+    最小值 = min(value)/10^6,
+    标准差 = sqrt(var(value/10^6))
+    
+  )
+result.2022 = fluidity.data.2022[,-1:-2] |> 
+  pivot_longer(cols = all_of(index),names_to = "index",values_to = 'value') |> 
+  group_by(index) |> 
+  summarise(
+    均值 = mean(value/10^6),
+    中位数 = median(value/10^6),
+    最大值 = max(value/10^6),
+    最小值 = min(value/10^6),
+    标准差 = sqrt(var(value/10^6))
+    
+  )
+result.2023 = fluidity.data.2023[,-1:-2] |> 
+  pivot_longer(cols = all_of(index),names_to = "index",values_to = 'value') |> 
+  group_by(index) |> 
+  summarise(
+    均值 = mean(value/10^6),
+    中位数 = median(value/10^6),
+    最大值 = max(value/10^6),
+    最小值 = min(value/10^6),
+    标准差 = sqrt(var(value/10^6))
+    
+  )
+result.2024 = fluidity.data.2024[,-1:-2] |> 
+  pivot_longer(cols = all_of(index),names_to = "index",values_to = 'value') |> 
+  group_by(index) |> 
+  summarise(
+    均值 = mean(value/10^6),
+    中位数 = median(value/10^6),
+    最大值 = max(value/10^6),
+    最小值 = min(value/10^6),
+    标准差 = sqrt(var(value/10^6))
+    
+  )
+
+pander(result.2021)
+```
+
+根据2021年最后一个季度的结果来看
+
+- 5支基金的平均申购（PQ）量为16.45亿元，其中，保险主题LOF最多，达到了163亿元，而最低的工银瑞信深证100ETF则仅有7百万元；  
+- 从赎回量（RQ）来看，仍然是保险主题LOF最多，达到了64亿元，最少的赎回量依旧是工银瑞信深证100ETF，有11.7百万元；  
+- 从净值变动来看仅有保险主题LOF申购大于赎回，其余均为净赎回，净赎回最大的是国联安沪深300ETF，达到了1.61亿元；  
+- 总交易额不出意料也是保险主题LOF最大。  
+
+**2022描述性统计**
+```{r}
+pander(result.2022)
+
+```
+
+2022年全年的状况与2021年最后一季度基本一致，但是国联安沪深300ETF与景顺长城成长之星股票A在2022年变为净申购。  
+
+**2023描述性统计**
+```{r}
+pander(result.2023)
+
+```
+
+2023年与2022年结果在申购与赎回量上保持一致，但净值变化方面恰好相反，仅有工银瑞信深证100ETF与建信深证基本面60ETF为净申购，其余均为净赎回状态。  
+
+**2024描述性统计**
+```{r}
+pander(result.2024)
+```
+
+2024年的前三季度，景顺长城成长之星股票A与国联安沪深300ETF为净申购状态，其余仍是净赎回状态，其余指标的排序仍然不变。  
+
+- 根据三年的描述性统计，不难看出从申购和赎回量来看，这五只基金受规模影响很大，规模最大的保险主题LOF一直是申购量和赎回量的最大值，而规模最小的工银瑞信深证100ETF则恰好相反。  
+
+- 但是净值变化方面则略有不同，无论何种规模，净值变化不一定一直为正或一直为负，年度之间有变化，且不知何种原因导致总是正负交替出现，
+
+## 2.流动性交易比率分析
+
+**2021年(单位：%)**
+```{r}
+index2 = names(fluidity.data[,c(8:11)])
+result.2021 = fluidity.data.2021[,-1:-2] |> 
+  pivot_longer(cols = all_of(index2),names_to = "index",values_to = 'value') |> 
+  group_by(index) |> 
+  summarise(
+    均值 = mean(value*100),
+    中位数 = median(value*100),
+    最大值 = max(value*100),
+    最小值 = min(value*100),
+    标准差 = sqrt(var(value*100))
+    
+  )
+result.2022 = fluidity.data.2022[,-1:-2] |> 
+  pivot_longer(cols = all_of(index2),names_to = "index",values_to = 'value') |> 
+  group_by(index) |> 
+  summarise(
+    均值 = mean(value*100),
+    中位数 = median(value*100),
+    最大值 = max(value*100),
+    最小值 = min(value*100),
+    标准差 = sqrt(var(value*100))
+    
+  )
+result.2023 = fluidity.data.2023[,-1:-2] |> 
+  pivot_longer(cols = all_of(index2),names_to = "index",values_to = 'value') |> 
+  group_by(index) |> 
+  summarise(
+    均值 = mean(value*100),
+    中位数 = median(value*100),
+    最大值 = max(value*100),
+    最小值 = min(value*100),
+    标准差 = sqrt(var(value*100))
+    
+  )
+result.2024 = fluidity.data.2024[,-1:-2] |> 
+  pivot_longer(cols = all_of(index2),names_to = "index",values_to = 'value') |> 
+  group_by(index) |> 
+  summarise(
+    均值 = mean(value*100),
+    中位数 = median(value*100),
+    最大值 = max(value*100),
+    最小值 = min(value*100),
+    标准差 = sqrt(var(value*100))
+    
+  )
+pander(result.2021)
+```
+
+- 2021年最后一个季度的申购率平均为236.9%，其中保险主题LOF最高，到了998%，这与申购的结果相似，在2021年末保险主题LOF有大量申购，而最低的是建信深证基本面60ETF，仅有8%，基本没有新的申购  
+- 从赎回率来看，也是保险主题LOF最大，达到了517%，建信深证基本面60ETF最小，仅有28.64%  
+- 申购率与赎回率的大小体现在换手率中就是保险主题LOF的换手率极高，达到了757%，而建信深证基本面60ETF仅有18.59%  
+- 同时对于净值变化率国联安沪深300ETF最低，达到了-55.8%，保险主题LOF最高达到了481%。
+
+**2022年**
+```{r}
+pander(result.2022)
+```
+
+- 2022年全年来看，工银瑞信深证100ETF的申购率最高，达到了1030%，而保险主题LOF最低，但是也有208%，说明2022年有大量资金注入了这五只基金中  
+- 从赎回率来看仍是工银瑞信深证100ETF最高，达到了1093%，最低的是景顺长城成长之星股票A，也达到了135.9%  
+- 高赎回和高申购带来的影响是高换手率，2022年所有基金的换手率都在200%以上，其中建信深证基本面60ETF是最低的206.6%，基金交易十分频繁，且交易额较大   
+- 净值变化率来看，国联安沪深300ETF，相对于2021年末来看扭负为正，达到了最高的546.2%。
+
+
+**2023年**
+```{r}
+pander(result.2023)
+```
+
+- 2023年来看，申购和赎回持续活跃，建信深证基本面60ETF申购率达到了2488%，赎回率达到了2468%，次之的工银瑞信深证100ETF这两个指标也均达到了2000%，这两者的净值变化也均呈现出增长趋势，其余的基金申购和赎回率相比而言较低，且净值变化也大多为负。
+
+**2024年**
+```{r}
+pander(result.2024)
+```
+
+- 2024年申购赎回较低，最高的国联安沪深300ETF为413%，最低的为建信深证基本面60ETF仅有19%，2023年的活跃交易后2024年该基金的交易不再活跃    
+- 赎回率上看工银瑞信深证100ETF最高，为264.1%，最低的是国联安沪深300ETF；由于国联安沪深300ETF赎回率远小于申购率，其净值变化率也是最高的396.3%，而最低的是保险主题LOF，为-54.75%  
+- 换手率方面，工银瑞信深证100ETF最高，但是与其余部分基金差别不大，整体来看，2024年前三季度的基金交易并不活跃。
+
+综合2021年到2024年的数据，不难看出国联安沪深300ETF一直较活跃，申购率基本都在400%以上，赎回率也普遍在100%以上，其余基金则波动较大，但总体来看，2023年是这五只基金交易最活跃的时间。
+
+## 3.流动性与基金业绩
+由于基金数量较少，因此采用季度化的几何平均收益率与简单平均的经风险调整收益率为响应量，季度内的交易为触发量进行回归。  
+
+```{r}
+#流动性与基金业绩
+#风险调整收益
+
+sharpe_everyday = nav.data |> 
+  mutate(建信深证基本面60ETF夏普 = 建信深证基本面60ETF超额收益/sqrt(var(建信深证基本面60ETF)),
+         工银瑞信深证100ETF夏普 = 工银瑞信深证100ETF超额收益/sqrt(var(工银瑞信深证100ETF)),
+         国联安沪深300ETF夏普 = 国联安沪深300ETF超额收益/sqrt(var(国联安沪深300ETF)),
+         景顺长城成长之星股票A夏普 = 景顺长城成长之星股票A超额收益/sqrt(var(景顺长城成长之星股票A)),
+         保险主题LOF夏普 = 保险主题LOF超额收益/sqrt(var(保险主题LOF超额收益))
+         )
+sharpe_everyday=sharpe_everyday[,c(1,17:21)]
+
+sharpe_everyday=sharpe_everyday |> 
+  mutate(year = year(日期),quarter = quarter(日期),id = 1:nrow(sharpe_everyday))
+
+sharpe_quarter = aggregate(.~year+quarter,data = sharpe_everyday[,-1],FUN = mean)
+sharpe_quarter=sharpe_quarter |> 
+  arrange(id)
+sharpe_quarter=sharpe_quarter[,-8]
+
+#几何平均收益
+
+return.data = nav.data[,c(1,3:7)]
+return.data = return.data |> 
+  mutate(year = year(日期),
+         quarter=quarter(日期),
+         id = 1:nrow(nav.data))
+geo_mean <- function(x) {
+  # (1 + 收益) 的乘积，再取 n 次方根，再减去 1
+  100*(prod(1 + x/100, na.rm = TRUE)^(1 / length(x)) - 1)
+}
+return.quarter = aggregate(.~year+quarter,data = return.data[,-1],FUN = geo_mean)
+return.quarter=return.quarter |> 
+  arrange(desc(id))
+return.quarter=return.quarter[,-8]
+
+
+fluidity.data <- read_excel("交易.xlsx", sheet = "Sheet3", 
+                            col_types = c("text", "text", "numeric", 
+                                          "numeric", "numeric", "numeric"))
+fluidity.data = fluidity.data |> 
+  mutate(
+    year = year(日期),
+    quarter=quarter(日期)
+  )
+PR.data = fluidity.data[,c(1,3,7,8)]
+PR.data=PR.data |> 
+  pivot_wider(
+      names_from = c("名称"),
+      values_from = "PR"
+  )
+
+RR.data = fluidity.data[,c(1,4,7,8)]
+RR.data=RR.data |> 
+  pivot_wider(
+    names_from = c("名称"),
+    values_from = "RR"
+  )
+
+
+NAVCR.data = fluidity.data[,c(1,5,7,8)]
+NAVCR.data=NAVCR.data |> 
+  pivot_wider(
+    names_from = c("名称"),
+    values_from = "NAVCR"
+  )
+
+TR.data = fluidity.data[,c(1,6:8)]
+TR.data=TR.data |> 
+  pivot_wider(
+    names_from = c("名称"),
+    values_from = "TR"
+  )
+
+sharpe.reg <- read_excel("sharpe.xlsx")
+
+coef=numeric(4)
+t=numeric(4)
+p=numeric(4)
+R2=numeric(4)
+dw=numeric(4)
+
+x=1
+
+for (i in 5:8) {
+  fit = lm(sharpe~.,data = sharpe.reg[,c(3,i)])
+  DW=dwtest(fit)
+  coef[x] = fit$coefficients[2]
+  t[x] = summary(fit)$coefficients[, "t value"][2]
+  p[x] = summary(fit)$coefficients[, "Pr(>|t|)"][2]
+  R2[x] = summary(fit)$r.squared
+  dw[x] = DW$statistic[[1]]
+  x=x+1
+}
+result1 = data.frame(名称 = c("PR","RR","NAVCR","TR"),
+                    系数 = coef,
+                    t值 = t,
+                    p值 = p,
+                    R2 = R2,
+                    DW = dw)
+coef=numeric(4)
+t=numeric(4)
+p=numeric(4)
+R2=numeric(4)
+dw=numeric(4)
+
+x=1
+
+for (i in 5:8) {
+  fit = lm(return~.,data = sharpe.reg[,c(4,i)])
+  DW=dwtest(fit)
+  coef[x] = fit$coefficients[2]
+  t[x] = summary(fit)$coefficients[, "t value"][2]
+  p[x] = summary(fit)$coefficients[, "Pr(>|t|)"][2]
+  R2[x] = summary(fit)$r.squared
+  dw[x] = DW$statistic[[1]]
+  x=x+1
+}
+
+result2 = data.frame(名称 = c("PR","RR","NAVCR","TR"),
+                     系数 = coef,
+                     t值 = t,
+                     p值 = p,
+                     R2 = R2,
+                     DW = dw)
+
+
+```
+
+**风险调整收益的回归结果**
+```{r}
+pander(result1)
+```
+
+
+**几何平均收益的回归结果**
+```{r}
+pander(result2)
+```
+
+
+回归结果显示：  
+
+- 无论何种指标，流动性对业绩在5%显著性水平下影响不显著，说明流动性对基金的业绩基本没有影响，但是从系数的正负可以稍微看出趋势，总体上业绩较好的保险主题LOF与景顺长城成长之星股票A的流动性不佳，反而是国联安沪深300ETF流动性很好，但是业绩较差，因此不严谨的说，对于风险调整收益，流动性和业绩之间在这五只基金是负相关。  
+
+- 由于几何平均收益的DW值较大，因此残差之间存在明显的自相关，且p值很高，因此基本没有参考价值，应当从风险角度看。  
+- 具体来说，可能是因为投资者比较保守，收益好的基金会一直持有，而收益较差的则会很快抛售，这也侧面反映了对于这五只基金来说，利润的来源主要是红利而非资本利得。另外高流动性势必带来流动性风险，增加基金经理调整投资组合的难度。频繁的资金流出可能导致基金经理需要花费更多的时间和精力去调整资产配置，并可能因此承担较高的交易成本，从而降低收益。  
+
+- 从不同的指标来看又可能不同的原因。  
+- 就申购率来说，高申购率表示投资者开始过度追捧某只基金，那么基金的净值可能已经被推高，未来回报的空间会相应减少。市场的高期望值使得基金管理人难以实现超越预期的表现。另外高申购率也会带来较重的费用负担，导致收益率低，因此考虑到风险，投资者和基金管理者可能会避免频繁交易。    
+- 就赎回率来说，当大量投资者赎回基金时，基金经理需要在短时间内卖出资产来满足赎回需求，可能会出现“抛售压力”。这种情况下，基金经理不得不在不利的市场条件下出售资产，可能导致基金净值下降，影响其长期业绩表现。  
+- 就净值变化率来看，高波动性意味着基金的净值可能经历频繁的回撤。如果基金在下跌时损失较大，即使之后市场反弹，基金也可能需要更长的时间才能恢复到原有的净值水平。根据“收益-回撤比”理论，较大的回撤往往使得基金难以恢复其业绩，尤其是长周期内。
+
+## 4.流动性交易对未来业绩影响
+
+下面考察流动性交易对未来业绩的影响，仍然以季度为一个考察时间段进行回归，分析当前季度对下一个季度的风险调整收益和几何平均收益的影响。
+```{r}
+sharpe.reg.lag = read_excel("sharpe.xlsx", sheet = "2")
+
+coef=numeric(4)
+t=numeric(4)
+p=numeric(4)
+R2=numeric(4)
+dw=numeric(4)
+
+x=1
+
+for (i in 5:8) {
+  fit = lm(sharpe~.,data = sharpe.reg.lag[,c(3,i)])
+  DW=dwtest(fit)
+  coef[x] = fit$coefficients[2]
+  t[x] = summary(fit)$coefficients[, "t value"][2]
+  p[x] = summary(fit)$coefficients[, "Pr(>|t|)"][2]
+  R2[x] = summary(fit)$r.squared
+  dw[x] = DW$statistic[[1]]
+  x=x+1
+}
+
+result3 = data.frame(名称 = c("PR","RR","NAVCR","TR"),
+                     系数 = coef,
+                     t值 = t,
+                     p值 = p,
+                     R2 = R2,
+                     DW = dw)
+
+coef=numeric(4)
+t=numeric(4)
+p=numeric(4)
+R2=numeric(4)
+dw=numeric(4)
+
+x=1
+
+for (i in 5:8) {
+  fit = lm(return~.,data = sharpe.reg.lag[,c(4,i)])
+  DW=dwtest(fit)
+  coef[x] = fit$coefficients[2]
+  t[x] = summary(fit)$coefficients[, "t value"][2]
+  p[x] = summary(fit)$coefficients[, "Pr(>|t|)"][2]
+  R2[x] = summary(fit)$r.squared
+  dw[x] = DW$statistic[[1]]
+  x=x+1
+}
+
+result4 = data.frame(名称 = c("PR","RR","NAVCR","TR"),
+                     系数 = coef,
+                     t值 = t,
+                     p值 = p,
+                     R2 = R2,
+                     DW = dw)
+```
+
+**风险调整收益的回归结果**
+```{r}
+pander(result3)
+```
+
+**几何平均收益的回归结果**
+```{r}
+pander(result4)
+```
+
+从结果上看，虽然系数绝大多数为负数，和预期结果（上文的分析）相同，但是对风险调整收益，其p值均明显大于0.05，且$R^2$低于1%拟合效果极差，对于几何平均收益，拟合相对较好，但是也不显著。  
+
+## 5.总结
+综上所述，对于这五种基金，流动性指标对于业绩之间的关系不明确，可能存在某种程度的负相关，但是非常不显著，可能是因为选取的基金数据较少，也可能单纯是因为这五种基金的申购赎回具有随机性，受投资者的信心等因素影响而不可控。
+
+# 七、分析结果总结
+
+总体而言，五只基金业绩排序受多种政策和因素影响，包括市场整体环境（宏观经济形势、货币政策、行业与监管政策）、基金自身特点与投资策略（投资策略风格、基金经理能力经验、规模与流动性管理）、投资者行为与市场情绪（申赎行为、市场情绪与羊群效应）以及其他因素（突发事件、基金公司综合实力）。这些因素相互交织，共同作用于基金业绩，导致五只基金在不同方面表现出差异，进而形成业绩排序，同时在不同方面各有优劣：
+
+- 保险主题LOF在净值增长、风险调整收益方面表现出色，证券选择能力较强，流动性虽不佳但业绩好，是五只基金中综合表现最优的基金。
+- 景顺长城成长之星股票A净值增长和风险调整收益较好，证券选择能力有一定表现，但市场时机把握能力模型评价结果不一致，整体表现良好。
+- 建信深证基本面60ETF在部分方面有一定表现，如在三因素模型中有倾向于价值股的特点，但在净值增长和风险调整收益方面未达领先水平，市场时机把握能力存在问题，整体表现中等。
+- 工银瑞信深证100ETF风险调整收益较低，净值增长未超基准，但在市场时机把握能力方面有优势（如TM模型下lambda值显著为正），业绩表现有待提升。
+- 国联安沪深300ETF净值增长未超基准，风险调整收益低，虽然流动性较好且一直交易活跃，但业绩较差，综合表现相对较弱。
+
+
+
+
+
+
+
+
+
